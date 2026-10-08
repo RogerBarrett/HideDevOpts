@@ -42,39 +42,56 @@ public class MainHook extends XposedModule {
     private Object packageManager;
     private Method getPackagesForUid;
 
+    // 双通道日志：同时写入系统 logcat 和 LSPosed 管理器日志
+    private void logInfo(String msg) {
+        Log.i(TAG, msg);
+        try {
+            log(Log.INFO, TAG, msg, null);
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private void logError(String msg, Throwable t) {
+        Log.e(TAG, msg, t);
+        try {
+            log(Log.ERROR, TAG, msg + ": " + t, null);
+        } catch (Throwable ignored) {
+        }
+    }
+
     @Override
     public void onModuleLoaded(XposedModuleInterface.ModuleLoadedParam param) {
-        Log.i(TAG, "=== onModuleLoaded: process=" + param.getProcessName() + " ===");
+        logInfo("=== onModuleLoaded: process=" + param.getProcessName() + " ===");
     }
 
     @Override
     public void onSystemServerStarting(XposedModuleInterface.SystemServerStartingParam param) {
-        Log.i(TAG, "=== onSystemServerStarting ===");
+        logInfo("=== onSystemServerStarting ===");
         ClassLoader cl = param.getClassLoader();
 
         // 1. 加载配置（失败不影响后续 hook）
         try {
             loadConfig();
         } catch (Throwable t) {
-            Log.e(TAG, "loadConfig failed", t);
+            logError("loadConfig failed", t);
         }
 
         // 2. 准备 PackageManager（用于 uid -> 包名反查）
         try {
             preparePackageManager(cl);
         } catch (Throwable t) {
-            Log.e(TAG, "preparePackageManager failed", t);
+            logError("preparePackageManager failed", t);
         }
 
         // 3. Hook SettingsProvider
         try {
             Class<?> providerClass = cl.loadClass(SETTINGS_PROVIDER);
-            Log.i(TAG, "loaded class: " + providerClass.getName());
+            logInfo("loaded class: " + providerClass.getName());
             hookQuery(providerClass);
             hookCall(providerClass);
-            Log.i(TAG, "=== hooked SettingsProvider OK ===");
+            logInfo("=== hooked SettingsProvider OK ===");
         } catch (Throwable t) {
-            Log.e(TAG, "hook failed", t);
+            logError("hook failed", t);
         }
     }
 
@@ -86,12 +103,12 @@ public class MainHook extends XposedModule {
         prefsListener = (sp, key) -> {
             if (KEY_HIDDEN.equals(key)) {
                 targetPackages = new HashSet<>(sp.getStringSet(KEY_HIDDEN, new HashSet<>()));
-                Log.i(TAG, "config updated, hidden packages: " + targetPackages.size());
+                logInfo("config updated, hidden packages: " + targetPackages.size());
             }
         };
         prefs.registerOnSharedPreferenceChangeListener(prefsListener);
 
-        Log.i(TAG, "loaded hidden packages: " + targetPackages.size());
+        logInfo("loaded hidden packages: " + targetPackages.size());
     }
 
     private void preparePackageManager(ClassLoader cl) throws Throwable {
@@ -100,10 +117,10 @@ public class MainHook extends XposedModule {
         this.packageManager = pm;
         try {
             this.getPackagesForUid = pm.getClass().getMethod("getPackagesForUid", int.class);
-            Log.i(TAG, "getPackagesForUid(uid) found");
+            logInfo("getPackagesForUid(uid) found");
         } catch (NoSuchMethodException e) {
             this.getPackagesForUid = pm.getClass().getMethod("getPackagesForUid", int.class, int.class);
-            Log.i(TAG, "getPackagesForUid(uid, userId) found");
+            logInfo("getPackagesForUid(uid, userId) found");
         }
     }
 
@@ -117,11 +134,11 @@ public class MainHook extends XposedModule {
                 m = cls.getDeclaredMethod("query",
                         Uri.class, String[].class, String.class, String[].class, String.class, CancellationSignal.class);
             } catch (NoSuchMethodException e2) {
-                Log.e(TAG, "no query method found", e2);
+                logError("no query method found", e2);
                 return;
             }
         }
-        Log.i(TAG, "hooking query: " + m);
+        logInfo("hooking query: " + m);
         hook(m)
                 .setId("hide_devopts_query")
                 .setExceptionMode(XposedInterface.ExceptionMode.DEFAULT)
@@ -139,7 +156,7 @@ public class MainHook extends XposedModule {
 
                     String[] projection = (String[]) chain.getArg(1);
                     Cursor fake = buildFakeCursor(name, HIDDEN_KEYS.get(name), projection);
-                    Log.i(TAG, "query blocked: " + name);
+                    logInfo("query blocked: " + name);
                     return fake;
                 });
     }
@@ -147,7 +164,7 @@ public class MainHook extends XposedModule {
     private void hookCall(Class<?> cls) throws NoSuchMethodException {
         Method m = cls.getDeclaredMethod("call",
                 String.class, String.class, Bundle.class);
-        Log.i(TAG, "hooking call: " + m);
+        logInfo("hooking call: " + m);
         hook(m)
                 .setId("hide_devopts_call")
                 .setExceptionMode(XposedInterface.ExceptionMode.DEFAULT)
@@ -167,7 +184,7 @@ public class MainHook extends XposedModule {
 
                     Bundle fake = new Bundle();
                     fake.putString("value", HIDDEN_KEYS.get(name));
-                    Log.i(TAG, "call blocked: " + method + "/" + name);
+                    logInfo("call blocked: " + method + "/" + name);
                     return fake;
                 });
     }
@@ -222,7 +239,7 @@ public class MainHook extends XposedModule {
         }
         int uid = Binder.getCallingUid();
         if (packageManager == null || getPackagesForUid == null) {
-            Log.w(TAG, "isTargetCaller: packageManager not ready");
+            logInfo("isTargetCaller: packageManager not ready");
             return false;
         }
         try {
@@ -235,13 +252,13 @@ public class MainHook extends XposedModule {
             if (result instanceof String[]) {
                 for (String p : (String[]) result) {
                     if (targetPackages.contains(p)) {
-                        Log.i(TAG, "target caller matched: uid=" + uid + " pkg=" + p);
+                        logInfo("target caller matched: uid=" + uid + " pkg=" + p);
                         return true;
                     }
                 }
             }
         } catch (Throwable t) {
-            Log.e(TAG, "resolve uid " + uid + " failed", t);
+            logError("resolve uid " + uid + " failed", t);
         }
         return false;
     }
