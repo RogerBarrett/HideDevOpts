@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">HideDevOpts</string>
+    <string name="app_description">阻止特定应用读取开发者选项</string>
+    <string name="title_select_apps">选择需要隐藏开发者选项的应用</string>
+</resources>

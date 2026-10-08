@@ -1,34 +1,31 @@
 package com.example.hidedevopts;
 
+import android.content.SharedPreferences;
 import android.database.Cursor;
 import android.database.MatrixCursor;
 import android.net.Uri;
 import android.os.Binder;
 import android.os.Bundle;
 import android.os.CancellationSignal;
+import android.util.Log;
 
-import java.util.Arrays;
+import java.lang.reflect.Method;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
 
-import de.robv.android.xposed.IXposedHookLoadPackage;
-import de.robv.android.xposed.XC_MethodHook;
-import de.robv.android.xposed.XposedBridge;
-import de.robv.android.xposed.XposedHelpers;
-import de.robv.android.xposed.callbacks.XC_LoadPackage;
+import io.github.libxposed.api.XposedInterface;
+import io.github.libxposed.api.XposedModule;
+import io.github.libxposed.api.XposedModuleInterface;
 
-public class MainHook implements IXposedHookLoadPackage {
+public class MainHook extends XposedModule {
 
+    private static final String TAG = "HideDevOpts";
     private static final String SETTINGS_PROVIDER =
             "com.android.providers.settings.SettingsProvider";
-
-    // ============ 可配置区域 ============
-    // 目标应用包名（建议改成 SharedPreferences 配置，这里示例先写死）
-    private static final Set<String> TARGET_PACKAGES = new HashSet<>(Arrays.asList(
-            "com.example.targetapp"
-    ));
+    private static final String PREFS_NAME = "default";
+    private static final String KEY_HIDDEN = "hidden_packages";
 
     // 要伪装成"关闭"的开发者选项 key -> 伪装值
     private static final Map<String, String> HIDDEN_KEYS = new HashMap<>();
@@ -38,80 +35,112 @@ public class MainHook implements IXposedHookLoadPackage {
         HIDDEN_KEYS.put("adb_port", "-1");                    // 无线调试端口
         HIDDEN_KEYS.put("adb_wifi_enabled", "0");             // 无线调试开关(Android 11+)
     }
-    // ====================================
+
+    // 用户勾选的应用包名（从 Remote Preferences 读取，动态更新）
+    private volatile Set<String> targetPackages = new HashSet<>();
+    private SharedPreferences.OnSharedPreferenceChangeListener prefsListener;
+
+    private Object packageManager;
+    private Method getPackagesForUid;
 
     @Override
-    public void handleLoadPackage(XC_LoadPackage.LoadPackageParam lpparam) {
-        // 只在系统框架(system_server)里 hook
-        if (!"android".equals(lpparam.packageName)) {
-            return;
-        }
-
-        XposedBridge.log("[HideDevOpts] hooked into system framework");
-
+    public void onSystemServerStarting(XposedModuleInterface.SystemServerStartingParam param) {
         try {
-            Class<?> cls = XposedHelpers.findClass(SETTINGS_PROVIDER, lpparam.classLoader);
-            hookQuery(cls);
-            hookCall(cls);
+            ClassLoader cl = param.getClassLoader();
+
+            preparePackageManager(cl);
+            loadConfig();
+
+            Class<?> providerClass = cl.loadClass(SETTINGS_PROVIDER);
+            hookQuery(providerClass);
+            hookCall(providerClass);
+
+            Log.i(TAG, "hooked SettingsProvider in system_server");
         } catch (Throwable t) {
-            XposedBridge.log("[HideDevOpts] init failed: " + t);
+            Log.e(TAG, "init failed", t);
         }
     }
 
-    // ---------------- query：Settings.Global/Secure 读取走这里 ----------------
-    // Android 8.0+ 签名: query(Uri, String[], Bundle, CancellationSignal)
-    private void hookQuery(Class<?> cls) {
-        XposedHelpers.findAndHookMethod(cls, "query",
-                Uri.class, String[].class, Bundle.class, CancellationSignal.class,
-                new XC_MethodHook() {
-                    @Override
-                    protected void beforeHookedMethod(MethodHookParam param) {
-                        String name = extractNameFromQuery(
-                                (Uri) param.args[0],
-                                (Bundle) param.args[2]);
+    private void loadConfig() {
+        SharedPreferences prefs = getRemotePreferences(PREFS_NAME);
+        targetPackages = new HashSet<>(prefs.getStringSet(KEY_HIDDEN, new HashSet<>()));
 
-                        // 只处理开发者选项相关 key，避免拖慢其他设置读取
-                        if (name == null || !HIDDEN_KEYS.containsKey(name)) {
-                            return;
-                        }
-                        if (!isTargetCaller()) {
-                            return;
-                        }
+        // 监听配置变化，实时更新；listener 需要强引用避免被 GC
+        prefsListener = (sp, key) -> {
+            if (KEY_HIDDEN.equals(key)) {
+                targetPackages = new HashSet<>(sp.getStringSet(KEY_HIDDEN, new HashSet<>()));
+                Log.i(TAG, "config updated, hidden packages: " + targetPackages.size());
+            }
+        };
+        prefs.registerOnSharedPreferenceChangeListener(prefsListener);
 
-                        String fakeValue = HIDDEN_KEYS.get(name);
-                        String[] projection = (String[]) param.args[1];
+        Log.i(TAG, "loaded hidden packages: " + targetPackages.size());
+    }
 
-                        param.setResult(buildFakeCursor(name, fakeValue, projection));
-                        XposedBridge.log("[HideDevOpts] query blocked: " + name);
+    private void preparePackageManager(ClassLoader cl) throws Throwable {
+        Class<?> appGlobals = cl.loadClass("android.app.AppGlobals");
+        Object pm = appGlobals.getMethod("getPackageManager").invoke(null);
+        this.packageManager = pm;
+        try {
+            this.getPackagesForUid = pm.getClass().getMethod("getPackagesForUid", int.class);
+        } catch (NoSuchMethodException e) {
+            this.getPackagesForUid = pm.getClass().getMethod("getPackagesForUid", int.class, int.class);
+        }
+    }
+
+    private void hookQuery(Class<?> cls) throws NoSuchMethodException {
+        Method m = cls.getDeclaredMethod("query",
+                Uri.class, String[].class, Bundle.class, CancellationSignal.class);
+        hook(m)
+                .setId("hide_devopts_query")
+                .setExceptionMode(XposedInterface.ExceptionMode.DEFAULT)
+                .intercept(chain -> {
+                    Uri uri = (Uri) chain.getArg(0);
+                    Bundle queryArgs = (Bundle) chain.getArg(2);
+
+                    String name = extractNameFromQuery(uri, queryArgs);
+                    if (name == null || !HIDDEN_KEYS.containsKey(name)) {
+                        return chain.proceed();
                     }
+                    if (!isTargetCaller()) {
+                        return chain.proceed();
+                    }
+
+                    String[] projection = (String[]) chain.getArg(1);
+                    Cursor fake = buildFakeCursor(name, HIDDEN_KEYS.get(name), projection);
+                    Log.i(TAG, "query blocked: " + name);
+                    return fake;
                 });
     }
 
-    // ---------------- call：GET_global / GET_secure 等走这里 ----------------
-    private void hookCall(Class<?> cls) {
-        XposedHelpers.findAndHookMethod(cls, "call",
-                String.class, String.class, Bundle.class,
-                new XC_MethodHook() {
-                    @Override
-                    protected void beforeHookedMethod(MethodHookParam param) {
-                        String method = (String) param.args[0];
-                        String name = (String) param.args[1];
+    private void hookCall(Class<?> cls) throws NoSuchMethodException {
+        Method m = cls.getDeclaredMethod("call",
+                String.class, String.class, Bundle.class);
+        hook(m)
+                .setId("hide_devopts_call")
+                .setExceptionMode(XposedInterface.ExceptionMode.DEFAULT)
+                .intercept(chain -> {
+                    String method = (String) chain.getArg(0);
+                    String name = (String) chain.getArg(1);
 
-                        if (method == null || !method.startsWith("GET_")) return;
-                        if (!HIDDEN_KEYS.containsKey(name)) return;
-                        if (!isTargetCaller()) return;
-
-                        Bundle fake = new Bundle();
-                        fake.putString("value", HIDDEN_KEYS.get(name));
-                        param.setResult(fake);
-                        XposedBridge.log("[HideDevOpts] call blocked: " + method + "/" + name);
+                    if (method == null || !method.startsWith("GET_")) {
+                        return chain.proceed();
                     }
+                    if (!HIDDEN_KEYS.containsKey(name)) {
+                        return chain.proceed();
+                    }
+                    if (!isTargetCaller()) {
+                        return chain.proceed();
+                    }
+
+                    Bundle fake = new Bundle();
+                    fake.putString("value", HIDDEN_KEYS.get(name));
+                    Log.i(TAG, "call blocked: " + method + "/" + name);
+                    return fake;
                 });
     }
 
-    // 从 uri 或 queryArgs 里解析出 setting name
     private String extractNameFromQuery(Uri uri, Bundle queryArgs) {
-        // 形式1: content://settings/global/adb_enabled
         if (uri != null && uri.getPathSegments() != null
                 && uri.getPathSegments().size() >= 2) {
             String last = uri.getLastPathSegment();
@@ -119,7 +148,6 @@ public class MainHook implements IXposedHookLoadPackage {
                 return last;
             }
         }
-        // 形式2: queryArgs 里 name=?
         if (queryArgs != null) {
             String selection = queryArgs.getString("android:query-arg-sql-selection");
             if (selection != null && selection.contains("name=?")) {
@@ -132,7 +160,6 @@ public class MainHook implements IXposedHookLoadPackage {
         return null;
     }
 
-    // 按 projection 构造伪造 Cursor，保证 getString(0) 返回伪值
     private Cursor buildFakeCursor(String name, String fakeValue, String[] projection) {
         String[] cols;
         Object[] row;
@@ -157,32 +184,29 @@ public class MainHook implements IXposedHookLoadPackage {
         return cursor;
     }
 
-    // 通过 Binder UID 识别调用者
     private boolean isTargetCaller() {
-        int uid = Binder.getCallingUid();
-        String[] pkgs = getPackagesForUid(uid);
-        if (pkgs == null) return false;
-
-        for (String p : pkgs) {
-            if (TARGET_PACKAGES.contains(p)) return true;
+        if (targetPackages.isEmpty()) {
+            return false;
         }
-        return false;
-    }
-
-    // UID -> 包名
-    private String[] getPackagesForUid(int uid) {
+        int uid = Binder.getCallingUid();
+        if (packageManager == null || getPackagesForUid == null) {
+            return false;
+        }
         try {
-            Class<?> appGlobals = XposedHelpers.findClass("android.app.AppGlobals", null);
-            Object pm = XposedHelpers.callStaticMethod(appGlobals, "getPackageManager");
-            try {
-                return (String[]) XposedHelpers.callMethod(pm, "getPackagesForUid", uid);
-            } catch (Throwable e) {
-                // Android 11+ 某些版本可能是双参重载
-                return (String[]) XposedHelpers.callMethod(pm, "getPackagesForUid", uid, 0);
+            Object result;
+            if (getPackagesForUid.getParameterCount() == 1) {
+                result = getPackagesForUid.invoke(packageManager, uid);
+            } else {
+                result = getPackagesForUid.invoke(packageManager, uid, 0);
+            }
+            if (result instanceof String[]) {
+                for (String p : (String[]) result) {
+                    if (targetPackages.contains(p)) return true;
+                }
             }
         } catch (Throwable t) {
-            XposedBridge.log("[HideDevOpts] resolve uid " + uid + " failed: " + t);
-            return null;
+            Log.e(TAG, "resolve uid " + uid + " failed", t);
         }
+        return false;
     }
 }

@@ -24,5 +24,6 @@ android {
 }
 
 dependencies {
-    compileOnly files('libs/XposedBridgeApi-82.jar')
+    compileOnly 'io.github.libxposed:api:102.0.0'
+    implementation 'io.github.libxposed:service:102.0.0'
 }
