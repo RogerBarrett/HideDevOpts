@@ -17,6 +17,7 @@ import java.util.Set;
 
 import io.github.libxposed.api.XposedInterface;
 import io.github.libxposed.api.XposedModule;
+import io.github.libxposed.api.XposedModuleInterface;
 import io.github.libxposed.api.XposedModuleInterface.ModuleLoadedParam;
 import io.github.libxposed.api.XposedModuleInterface.SystemServerStartingParam;
 
@@ -43,32 +44,20 @@ public class MainHook extends XposedModule {
     private Object packageManager;
     private Method getPackagesForUid;
 
-    // 必须保留此签名的双参构造函数（框架通过反射调用它实例化入口类）
-    public MainHook(XposedInterface base, ModuleLoadedParam param) {
-        super(base, param);
-        String initMsg = "MainHook init: process=" + param.getProcessName();
-        Log.i(TAG, "=== " + initMsg + " ===");
-        try {
-            log(initMsg);
-        } catch (Throwable ignored) {
-        }
-    }
-
     // 双通道日志：系统 logcat + LSPosed 管理器日志
     private void logInfo(String msg) {
         Log.i(TAG, msg);
-        try {
-            log(msg);
-        } catch (Throwable ignored) {
-        }
+        log(Log.INFO, TAG, msg, null);
     }
 
     private void logError(String msg, Throwable t) {
         Log.e(TAG, msg, t);
-        try {
-            log(msg + ": " + t, t);
-        } catch (Throwable ignored) {
-        }
+        log(Log.ERROR, TAG, msg, t);
+    }
+
+    @Override
+    public void onModuleLoaded(ModuleLoadedParam param) {
+        logInfo("=== onModuleLoaded: process=" + param.getProcessName() + " ===");
     }
 
     @Override
