@@ -21,7 +21,7 @@ import java.util.Set;
 
 import io.github.libxposed.service.XposedService;
 
-public class MainActivity extends Activity {
+public class MainActivity extends Activity implements App.ServiceListener {
 
     private static final String PREFS_NAME = "default";
     private static final String KEY_HIDDEN = "hidden_packages";
@@ -40,7 +40,6 @@ public class MainActivity extends Activity {
         searchInput = findViewById(R.id.search_input);
         showSystemToggle = findViewById(R.id.show_system_toggle);
 
-        loadSelectedPackages();
         allApps = loadInstalledApps();
 
         ListView listView = findViewById(R.id.app_list);
@@ -64,12 +63,27 @@ public class MainActivity extends Activity {
 
         showSystemToggle.setOnCheckedChangeListener((buttonView, isChecked) -> applyFilter());
 
+        // 注册 service 监听：绑定完成后会触发 onServiceReady 重新读取配置
+        App.addServiceListener(this);
+
         applyFilter();
 
         if (App.getService() == null) {
             Toast.makeText(this, "LSPosed 框架未连接，请确认模块已在 LSPosed 中启用",
                     Toast.LENGTH_LONG).show();
         }
+    }
+
+    @Override
+    protected void onDestroy() {
+        super.onDestroy();
+        App.removeServiceListener(this);
+    }
+
+    @Override
+    public void onServiceReady() {
+        loadSelectedPackages();
+        applyFilter();
     }
 
     private void applyFilter() {
@@ -101,6 +115,7 @@ public class MainActivity extends Activity {
         try {
             SharedPreferences prefs = service.getRemotePreferences(PREFS_NAME);
             Set<String> saved = prefs.getStringSet(KEY_HIDDEN, null);
+            selectedPackages.clear();
             if (saved != null) {
                 selectedPackages.addAll(saved);
             }
@@ -144,10 +159,13 @@ public class MainActivity extends Activity {
             return;
         }
         try {
-            service.getRemotePreferences(PREFS_NAME)
+            boolean ok = service.getRemotePreferences(PREFS_NAME)
                     .edit()
                     .putStringSet(KEY_HIDDEN, new HashSet<>(selectedPackages))
-                    .apply();
+                    .commit();
+            if (!ok) {
+                Toast.makeText(this, "保存失败，请重试", Toast.LENGTH_SHORT).show();
+            }
         } catch (Throwable t) {
             Toast.makeText(this, "保存失败: " + t.getMessage(), Toast.LENGTH_SHORT).show();
         }
