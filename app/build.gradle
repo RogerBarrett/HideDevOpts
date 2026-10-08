@@ -1,0 +1,28 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'com.example.hidedevopts'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId "com.example.hidedevopts"
+        minSdk 21
+        targetSdk 34
+        versionCode 1
+        versionName "1.0"
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            // 用 debug 签名，保证 CI 出来的 APK 可直接安装
+            signingConfig signingConfigs.debug
+        }
+    }
+}
+
+dependencies {
+    compileOnly 'de.robv.android.xposed:api:82'
+}
