@@ -43,6 +43,11 @@ public class MainHook extends XposedModule {
     private Method getPackagesForUid;
 
     @Override
+    public void onModuleLoaded(XposedModuleInterface.ModuleLoadedParam param) {
+        Log.i(TAG, "=== onModuleLoaded: process=" + param.getProcessName() + " ===");
+    }
+
+    @Override
     public void onSystemServerStarting(XposedModuleInterface.SystemServerStartingParam param) {
         Log.i(TAG, "=== onSystemServerStarting ===");
         ClassLoader cl = param.getClassLoader();
