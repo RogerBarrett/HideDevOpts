@@ -64,10 +64,10 @@ public class MainHook extends XposedModule {
 
     @Override
     public void onPackageReady(PackageReadyParam param) {
-        if (!SETTINGS_PROCESS.equals(param.packageName)) {
+        if (!SETTINGS_PROCESS.equals(param.getPackageName())) {
             return;
         }
-        logInfo("=== onPackageReady: " + param.packageName + " ===");
+        logInfo("=== onPackageReady: " + param.getPackageName() + " ===");
         this.targetClassLoader = param.getClassLoader();
 
         // 1. 加载配置（失败不影响后续 hook）
