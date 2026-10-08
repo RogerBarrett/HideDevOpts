@@ -1,6 +1,7 @@
 # HideDevOpts
 一个 [LSPosed](https://github.com/LSPosed/LSPosed) 模块，针对你指定的应用**隐藏开发者选项**。
 当被勾选的应用读取开发者选项相关开关（`development_settings_enabled`、`adb_enabled`、`adb_wifi_enabled` 等）时，本模块会返回"已关闭/未开启"的伪造值，让应用误以为设备没有开启开发者选项。其他未勾选的应用不受任何影响。
+  
    ✨ 特性
 -  **精准定向**：只对你在 App 里勾选的应用生效，其余应用完全不受干扰。
 -  **不注入目标应用**：仅在 `system_server`（系统框架）进程内拦截 `SettingsProvider`，不 hook 目标应用本身，可避开目标应用的反 hook 检测。
@@ -39,7 +40,7 @@
 gradle assembleRelease
 ```
 产物位于 `app/build/outputs/apk/release/`。
-## 📄 致谢
+##  致谢
 - [libxposed](https://github.com/libxposed/api) —— 现代 Xposed API
 - [LSPosed](https://github.com/LSPosed/LSPosed) —— Xposed 框架
 - [IAmNotADeveloper](https://github.com/xfqwdsj/IAmNotADeveloper) —— 同类项目的实现参考
