@@ -4,7 +4,7 @@ plugins {
 
 android {
     namespace 'com.example.hidedevopts'
-    compileSdk 34
+    compileSdk 37
 
     defaultConfig {
         applicationId "com.example.hidedevopts"
