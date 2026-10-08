@@ -15,7 +15,7 @@ import java.util.Set;
 public class AppListAdapter extends BaseAdapter {
 
     private final Context context;
-    private final List<AppInfo> apps;
+    private List<AppInfo> apps;
     private final Set<String> selectedPackages;
     private final MainActivity activity;
 
@@ -25,6 +25,11 @@ public class AppListAdapter extends BaseAdapter {
         this.apps = apps;
         this.selectedPackages = selectedPackages;
         this.activity = activity;
+    }
+
+    public void updateData(List<AppInfo> newApps) {
+        this.apps = newApps;
+        notifyDataSetChanged();
     }
 
     @Override

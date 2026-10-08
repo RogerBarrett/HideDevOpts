@@ -12,6 +12,26 @@
         android:textSize="16sp"
         android:textStyle="bold" />
 
+    <EditText
+        android:id="@+id/search_input"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="16dp"
+        android:layout_marginEnd="16dp"
+        android:hint="@string/hint_search"
+        android:inputType="text"
+        android:singleLine="true" />
+
+    <CheckBox
+        android:id="@+id/show_system_toggle"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="16dp"
+        android:layout_marginTop="8dp"
+        android:layout_marginBottom="8dp"
+        android:checked="true"
+        android:text="@string/show_system_apps" />
+
     <ListView
         android:id="@+id/app_list"
         android:layout_width="match_parent"
