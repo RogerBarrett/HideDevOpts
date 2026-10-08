@@ -1,64 +1,45 @@
-          HideDevOpts
+# HideDevOpts
+一个 [LSPosed](https://github.com/LSPosed/LSPosed) 模块，针对你指定的应用**隐藏开发者选项**。
+当被勾选的应用读取开发者选项相关开关（`development_settings_enabled`、`adb_enabled`、`adb_wifi_enabled` 等）时，本模块会返回"已关闭/未开启"的伪造值，让应用误以为设备没有开启开发者选项。其他未勾选的应用不受任何影响。
+   ✨ 特性
+-  **精准定向**：只对你在 App 里勾选的应用生效，其余应用完全不受干扰。
+-  **不注入目标应用**：仅在 `system_server`（系统框架）进程内拦截 `SettingsProvider`，不 hook 目标应用本身，可避开目标应用的反 hook 检测。
+- **图形化配置界面**：应用列表（图标 + 名称 + 包名）、勾选即保存、实时搜索、显示/隐藏系统应用。
+- **配置持久化**：基于 libxposed Remote Preferences 跨进程同步，重启不丢失。
+##  工作原理
+开发者选项的开关值存储在系统设置（`Settings.Global` / `Settings.Secure`）中。应用读取这些值时，最终会跨进程调用 `SettingsProvider`。
+本模块注入 `system_server` 进程，hook 其中的 `SettingsProvider` 的 `query` / `call` 方法：
+1. 识别当前发起读取的调用者（通过 `Binder.getCallingUid()` 反查包名）；
+2. 若调用者是你勾选的目标应用，且读取的 key 是开发者选项相关键值；
+3. 则返回伪造值（`development_settings_enabled=0`、`adb_enabled=0`、`adb_port=-1`、`adb_wifi_enabled=0` 等）。
+被拦截的键值：
 
-  An LSPosed module that hides Developer Options from specified apps.
+| Key | 伪造值 | 含义 |
+| :--- | :--- | :--- |
+| `development_settings_enabled` | `0` | 开发者选项总开关 |
+| `adb_enabled` | `0` | USB 调试 |
+| `adb_port` | `-1` | 无线调试端口 |
+| `adb_wifi_enabled` | `0` | 无线调试（Android 11+） |
 
-  When a selected app reads Developer Options-related switches ("development_settings_enabled", "adb_enabled", "adb_wifi_enabled", etc.), this module returns spoofed values indicating that they are "disabled/not enabled", making the app believe that Developer Options are not enabled on the device. Other apps that are not selected are completely unaffected.
-
-✨ Features
-
-- Precise targeting: Only takes effect for apps you select in the app. All other apps remain completely unaffected.
-- No injection into target apps: Only intercepts "SettingsProvider" inside the "system_server" process and does not hook the target apps themselves, helping avoid anti-hook detection.
-- Graphical configuration interface: App list with icons, names, and package names; checkboxes are saved immediately; real-time search; option to show/hide system apps.
-- Persistent configuration: Uses libxposed Remote Preferences for cross-process synchronization. Settings are preserved across reboots.
-
-  How It Works
-
-Developer Options switches are stored in system settings ("Settings.Global" / "Settings.Secure"). When an app reads these values, the request ultimately crosses the process boundary to "SettingsProvider".
-
-This module injects into the "system_server" process and hooks the "query" / "call" methods of "SettingsProvider":
-
-1. Identifies the caller making the request using "Binder.getCallingUid()" and resolves the corresponding package name;
-2. If the caller is a selected target app and the requested key is related to Developer Options;
-3. Returns a spoofed value ("development_settings_enabled=0", "adb_enabled=0", "adb_port=-1", "adb_wifi_enabled=0", etc.).
-
-The intercepted keys:
-
-Key| Spoofed Value| Meaning
-"development_settings_enabled"| "0"| Developer Options master switch
-"adb_enabled"| "0"| USB debugging
-"adb_port"| "-1"| Wireless debugging port
-"adb_wifi_enabled"| "0"| Wireless debugging (Android 11+)
-
-📥 Installation & Usage
-
-1. Install LSPosed (requires a root solution such as Magisk/KernelSU, with Zygisk/LSPosed enabled).
-2. Install the module APK and enable the module in LSPosed Manager.
-3. Make sure the LSPosed scope includes 「System Framework / system」.
-4. Open the HideDevOpts app and select the apps for which you want to hide Developer Options.
-5. Reboot your phone (the module is injected into "system_server", so a reboot is required for changes to take effect).
-
-«Tip: If the target app has already read the Developer Options status before being selected, it may temporarily continue using its cached value. Cold-start the target app to apply the change.»
-
-Build
-
-This project is built in the cloud using GitHub Actions (no local Android environment required).
-
-Dependency versions:
-
-- libxposed "api" / "service": "102.0.0"
-- compileSdk "37", minSdk "26", targetSdk "34"
-- AGP "8.13.0", Gradle "8.13"
-
-Local build:
-
+## 📥 安装与使用
+1. 安装 LSPosed（需要 Magisk/KernelSU 等 root 方案，并启用 Zygisk/LSPosed）。
+2. 安装本模块 APK，并在 LSPosed 管理器中启用本模块。
+3. 在 LSPosed 中确认作用域包含「系统框架 / System Framework」（`system`）。
+4. 打开 HideDevOpts App，勾选需要隐藏开发者选项的应用。
+5. 重启手机（模块注入的是 system_server，更新后需要重启生效）。
+> 提示：目标应用若在勾选前已经读取过开发者选项，可能因自身内存缓存而短暂失效，冷启动目标应用即可。
+##  构建
+本项目通过 GitHub Actions 云端编译（无需本地 Android 环境）。
+依赖版本：
+- libxposed `api` / `service`：`102.0.0`
+- compileSdk `37`，minSdk `26`，targetSdk `34`
+- AGP `8.13.0`，Gradle `8.13`
+本地构建：
+```bash
 gradle assembleRelease
-
-The output is located at:
-
-"app/build/outputs/apk/release/"
-
-📄 Acknowledgements
-
-- "libxposed" (https://github.com/libxposed/api) — Modern Xposed API
-- "LSPosed" (https://github.com/LSPosed/LSPosed) — Xposed framework
-- "IAmNotADeveloper" (https://github.com/xfqwdsj/IAmNotADeveloper) — Reference implementation for a similar project
+```
+产物位于 `app/build/outputs/apk/release/`。
+## 📄 致谢
+- [libxposed](https://github.com/libxposed/api) —— 现代 Xposed API
+- [LSPosed](https://github.com/LSPosed/LSPosed) —— Xposed 框架
+- [IAmNotADeveloper](https://github.com/xfqwdsj/IAmNotADeveloper) —— 同类项目的实现参考
