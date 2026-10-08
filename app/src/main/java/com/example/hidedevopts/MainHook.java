@@ -36,7 +36,6 @@ public class MainHook extends XposedModule {
         HIDDEN_KEYS.put("adb_wifi_enabled", "0");             // 无线调试开关(Android 11+)
     }
 
-    // 用户勾选的应用包名（从 Remote Preferences 读取，动态更新）
     private volatile Set<String> targetPackages = new HashSet<>();
     private SharedPreferences.OnSharedPreferenceChangeListener prefsListener;
 
@@ -45,19 +44,32 @@ public class MainHook extends XposedModule {
 
     @Override
     public void onSystemServerStarting(XposedModuleInterface.SystemServerStartingParam param) {
+        Log.i(TAG, "=== onSystemServerStarting ===");
+        ClassLoader cl = param.getClassLoader();
+
+        // 1. 加载配置（失败不影响后续 hook）
         try {
-            ClassLoader cl = param.getClassLoader();
-
-            preparePackageManager(cl);
             loadConfig();
+        } catch (Throwable t) {
+            Log.e(TAG, "loadConfig failed", t);
+        }
 
+        // 2. 准备 PackageManager（用于 uid -> 包名反查）
+        try {
+            preparePackageManager(cl);
+        } catch (Throwable t) {
+            Log.e(TAG, "preparePackageManager failed", t);
+        }
+
+        // 3. Hook SettingsProvider
+        try {
             Class<?> providerClass = cl.loadClass(SETTINGS_PROVIDER);
+            Log.i(TAG, "loaded class: " + providerClass.getName());
             hookQuery(providerClass);
             hookCall(providerClass);
-
-            Log.i(TAG, "hooked SettingsProvider in system_server");
+            Log.i(TAG, "=== hooked SettingsProvider OK ===");
         } catch (Throwable t) {
-            Log.e(TAG, "init failed", t);
+            Log.e(TAG, "hook failed", t);
         }
     }
 
@@ -83,14 +95,28 @@ public class MainHook extends XposedModule {
         this.packageManager = pm;
         try {
             this.getPackagesForUid = pm.getClass().getMethod("getPackagesForUid", int.class);
+            Log.i(TAG, "getPackagesForUid(uid) found");
         } catch (NoSuchMethodException e) {
             this.getPackagesForUid = pm.getClass().getMethod("getPackagesForUid", int.class, int.class);
+            Log.i(TAG, "getPackagesForUid(uid, userId) found");
         }
     }
 
-    private void hookQuery(Class<?> cls) throws NoSuchMethodException {
-        Method m = cls.getDeclaredMethod("query",
-                Uri.class, String[].class, Bundle.class, CancellationSignal.class);
+    private void hookQuery(Class<?> cls) {
+        Method m = null;
+        try {
+            m = cls.getDeclaredMethod("query",
+                    Uri.class, String[].class, Bundle.class, CancellationSignal.class);
+        } catch (NoSuchMethodException e1) {
+            try {
+                m = cls.getDeclaredMethod("query",
+                        Uri.class, String[].class, String.class, String[].class, String.class, CancellationSignal.class);
+            } catch (NoSuchMethodException e2) {
+                Log.e(TAG, "no query method found", e2);
+                return;
+            }
+        }
+        Log.i(TAG, "hooking query: " + m);
         hook(m)
                 .setId("hide_devopts_query")
                 .setExceptionMode(XposedInterface.ExceptionMode.DEFAULT)
@@ -116,6 +142,7 @@ public class MainHook extends XposedModule {
     private void hookCall(Class<?> cls) throws NoSuchMethodException {
         Method m = cls.getDeclaredMethod("call",
                 String.class, String.class, Bundle.class);
+        Log.i(TAG, "hooking call: " + m);
         hook(m)
                 .setId("hide_devopts_call")
                 .setExceptionMode(XposedInterface.ExceptionMode.DEFAULT)
@@ -190,6 +217,7 @@ public class MainHook extends XposedModule {
         }
         int uid = Binder.getCallingUid();
         if (packageManager == null || getPackagesForUid == null) {
+            Log.w(TAG, "isTargetCaller: packageManager not ready");
             return false;
         }
         try {
@@ -201,7 +229,10 @@ public class MainHook extends XposedModule {
             }
             if (result instanceof String[]) {
                 for (String p : (String[]) result) {
-                    if (targetPackages.contains(p)) return true;
+                    if (targetPackages.contains(p)) {
+                        Log.i(TAG, "target caller matched: uid=" + uid + " pkg=" + p);
+                        return true;
+                    }
                 }
             }
         } catch (Throwable t) {
