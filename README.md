@@ -1,8 +1,8 @@
-HideDevOpts
+          HideDevOpts
 
-An "LSPosed" (https://github.com/LSPosed/LSPosed) module that hides Developer Options from specified apps.
+  An LSPosed module that hides Developer Options from specified apps.
 
-When a selected app reads Developer Options-related switches ("development_settings_enabled", "adb_enabled", "adb_wifi_enabled", etc.), this module returns spoofed values indicating that they are "disabled/not enabled", making the app believe that Developer Options are not enabled on the device. Other apps that are not selected are completely unaffected.
+  When a selected app reads Developer Options-related switches ("development_settings_enabled", "adb_enabled", "adb_wifi_enabled", etc.), this module returns spoofed values indicating that they are "disabled/not enabled", making the app believe that Developer Options are not enabled on the device. Other apps that are not selected are completely unaffected.
 
 ✨ Features
 
@@ -11,7 +11,7 @@ When a selected app reads Developer Options-related switches ("development_setti
 - Graphical configuration interface: App list with icons, names, and package names; checkboxes are saved immediately; real-time search; option to show/hide system apps.
 - Persistent configuration: Uses libxposed Remote Preferences for cross-process synchronization. Settings are preserved across reboots.
 
-How It Works
+  How It Works
 
 Developer Options switches are stored in system settings ("Settings.Global" / "Settings.Secure"). When an app reads these values, the request ultimately crosses the process boundary to "SettingsProvider".
 
