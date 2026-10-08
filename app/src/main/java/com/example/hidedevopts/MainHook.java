@@ -17,13 +17,14 @@ import java.util.Set;
 
 import io.github.libxposed.api.XposedInterface;
 import io.github.libxposed.api.XposedModule;
-import io.github.libxposed.api.XposedModuleInterface;
 import io.github.libxposed.api.XposedModuleInterface.ModuleLoadedParam;
-import io.github.libxposed.api.XposedModuleInterface.SystemServerStartingParam;
+import io.github.libxposed.api.XposedModuleInterface.PackageReadyParam;
 
 public class MainHook extends XposedModule {
 
     private static final String TAG = "HideDevOpts";
+    // SettingsProvider 所在的独立进程（ColorOS/模块化 Android 中被拆分出 system_server）
+    private static final String SETTINGS_PROCESS = "com.android.providers.settings";
     private static final String SETTINGS_PROVIDER =
             "com.android.providers.settings.SettingsProvider";
     private static final String PREFS_NAME = "default";
@@ -43,6 +44,7 @@ public class MainHook extends XposedModule {
 
     private Object packageManager;
     private Method getPackagesForUid;
+    private ClassLoader targetClassLoader;
 
     // 双通道日志：系统 logcat + LSPosed 管理器日志
     private void logInfo(String msg) {
@@ -61,9 +63,12 @@ public class MainHook extends XposedModule {
     }
 
     @Override
-    public void onSystemServerStarting(SystemServerStartingParam param) {
-        logInfo("=== onSystemServerStarting ===");
-        ClassLoader cl = param.getClassLoader();
+    public void onPackageReady(PackageReadyParam param) {
+        if (!SETTINGS_PROCESS.equals(param.packageName)) {
+            return;
+        }
+        logInfo("=== onPackageReady: " + param.packageName + " ===");
+        this.targetClassLoader = param.getClassLoader();
 
         // 1. 加载配置（失败不影响后续 hook）
         try {
@@ -74,14 +79,14 @@ public class MainHook extends XposedModule {
 
         // 2. 准备 PackageManager（用于 uid -> 包名反查）
         try {
-            preparePackageManager(cl);
+            preparePackageManager(this.targetClassLoader);
         } catch (Throwable t) {
             logError("preparePackageManager failed", t);
         }
 
         // 3. Hook SettingsProvider
         try {
-            Class<?> providerClass = cl.loadClass(SETTINGS_PROVIDER);
+            Class<?> providerClass = this.targetClassLoader.loadClass(SETTINGS_PROVIDER);
             logInfo("loaded class: " + providerClass.getName());
             hookQuery(providerClass);
             hookCall(providerClass);
@@ -95,7 +100,6 @@ public class MainHook extends XposedModule {
         SharedPreferences prefs = getRemotePreferences(PREFS_NAME);
         targetPackages = new HashSet<>(prefs.getStringSet(KEY_HIDDEN, new HashSet<>()));
 
-        // 监听配置变化，实时更新；listener 需要强引用避免被 GC
         prefsListener = (sp, key) -> {
             if (KEY_HIDDEN.equals(key)) {
                 targetPackages = new HashSet<>(sp.getStringSet(KEY_HIDDEN, new HashSet<>()));
@@ -110,6 +114,10 @@ public class MainHook extends XposedModule {
     private void preparePackageManager(ClassLoader cl) throws Throwable {
         Class<?> appGlobals = cl.loadClass("android.app.AppGlobals");
         Object pm = appGlobals.getMethod("getPackageManager").invoke(null);
+        if (pm == null) {
+            logInfo("getPackageManager returned null (not ready yet)");
+            return;
+        }
         this.packageManager = pm;
         try {
             this.getPackagesForUid = pm.getClass().getMethod("getPackagesForUid", int.class);
@@ -233,11 +241,19 @@ public class MainHook extends XposedModule {
         if (targetPackages.isEmpty()) {
             return false;
         }
-        int uid = Binder.getCallingUid();
+        // 懒加载 PackageManager（首次调用时才真正就绪）
+        if (packageManager == null && targetClassLoader != null) {
+            try {
+                preparePackageManager(targetClassLoader);
+            } catch (Throwable t) {
+                logError("lazy preparePackageManager failed", t);
+                return false;
+            }
+        }
         if (packageManager == null || getPackagesForUid == null) {
-            logInfo("isTargetCaller: packageManager not ready");
             return false;
         }
+        int uid = Binder.getCallingUid();
         try {
             Object result;
             if (getPackagesForUid.getParameterCount() == 1) {
